@@ -89,6 +89,7 @@ class ITSClusterTask : public TaskInterface
 
   //  THnSparseD *sClustersSize[7];
   TH2D* mGeneralOccupancy;
+  TH1D* hClusterPerChip;
 
   const int mOccUpdateFrequency = 100000;
   int mNThreads = 1;
@@ -107,6 +108,8 @@ class ITSClusterTask : public TaskInterface
   const int StaveBoundary[NLayer + 1] = { 0, 12, 28, 48, 72, 102, 144, 192 };
   const std::string mYlabels[NLayer * 2] = { "L6B(S24#rightarrow47)", "L5B(S21#rightarrow41)", "L4B(S15#rightarrow29)", "L3B(S12#rightarrow23)", "L2B(S10#rightarrow19)", "L1B(S08#rightarrow15)", "L0B(S06#rightarrow11)", "L0T(S00#rightarrow05)", "L1T(S00#rightarrow07)", "L2T(S00#rightarrow09)", "L3T(S00#rightarrow11)", "L4T(S00#rightarrow14)", "L5T(S00#rightarrow20)", "L6T(S00#rightarrow23)" };
 
+  const double xDimensionChip = 3.0;//cm
+  const double zDimensionChip = 1.5;//cm
   int mEnableLayers[7];
   int mClusterSize[7][48][28] = { { { 0 } } }; //[#layers][max staves][max lanes / chips]
   double mClusterSizeMonitor[7][48][28] = { { { 0 } } };

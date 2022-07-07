@@ -49,6 +49,7 @@ ITSClusterTask::ITSClusterTask() : TaskInterface() {}
 ITSClusterTask::~ITSClusterTask()
 {
   delete hClusterVsBunchCrossing;
+  delete hClusterPerChip;
   for (Int_t iLayer = 0; iLayer < NLayer; iLayer++) {
 
     if (!mEnableLayers[iLayer])
@@ -148,6 +149,8 @@ void ITSClusterTask::monitorData(o2::framework::ProcessingContext& ctx)
   auto clusArr = ctx.inputs().get<gsl::span<o2::itsmft::CompClusterExt>>("compclus");
   auto clusRofArr = ctx.inputs().get<gsl::span<o2::itsmft::ROFRecord>>("clustersrof");
   auto clusPatternArr = ctx.inputs().get<gsl::span<unsigned char>>("patterns");
+  auto vertexArr = ctx.inputs().get<gsl::span<o2::dataformats::Vertex<o2::dataformats::TimeStamp<int>>>>("Vertices");
+  auto vertexRofArr = ctx.inputs().get<gsl::span<o2::itsmft::ROFRecord>>("Verticesrof");
   auto pattIt = clusPatternArr.begin();
   int dictSize = mDict->getSize();
 
@@ -157,6 +160,52 @@ void ITSClusterTask::monitorData(o2::framework::ProcessingContext& ctx)
   omp_set_num_threads(mNThreads);
 #pragma omp parallel for schedule(dynamic)
 #endif
+//Doing something new here!!!
+for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
+
+    int start = vertexRofArr[iROF].getFirstEntry();
+    int end = start + vertexRofArr[iROF].getNEntries();
+    int nvtxROF = 0;
+    int nvtxROF_nocut = vertexRofArr[iROF].getNEntries();
+    int rofFLAG = 1;
+    double zVertexAverage = 0;
+    for (int ivtx = start; ivtx < end; ivtx++) {
+      auto& vertex = vertexArr[ivtx];
+      if (vertex.getNContributors() > 0) {
+        nvtxROF++;
+      }
+      for (int jvtx = start; jvtx < end; jvtx++) {
+        if(jvtx == ivtx) continue;
+        auto& jvertex = vertexArr[jvtx];
+        if(std::abs(jvertex.getX() - vertex.getX()) > 1) rofFLAG = 0;
+        if(std::abs(jvertex.getY() - vertex.getY()) > 1) rofFLAG = 0;
+        if(std::abs(jvertex.getZ() - vertex.getZ()) > 1) rofFLAG = 0;
+      }
+      zVertexAverage += vertex.getZ();
+    }
+    zVertexAverage /= nvtxROF;
+    if (rofFLAG){
+      const auto& ROF = clusRofArr[iROF];
+      for (int icl = ROF.getFirstEntry(); icl < ROF.getFirstEntry() + ROF.getNEntries(); icl++) {
+        auto& cluster = clusArr[icl];
+        auto ChipID = cluster.getSensorID();
+        int lay, sta, ssta, mod, chip, lane;
+        if (ChipID != ChipIDprev) {
+          mGeom->getChipId(ChipID, lay, sta, ssta, mod, chip);
+          mod = mod + (ssta * (mNHicPerStave[lay] / 2));
+          int chipIdLocal = (ChipID - ChipBoundary[lay]) % (14 * mNHicPerStave[lay]);
+          lane = (chipIdLocal % (14 * mNHicPerStave[lay])) / (14 / 2);
+        }
+        if (lay < 3) {
+          //ILOG(Info, Support) << "ChipID " << ChipID << "Chip " << chip << " Layer " << lay << " Stave " << sta << ENDM;
+          hClusterPerChip->Fill(ChipID);
+        }
+      }
+      //Scaling per # of vertex per ROF and multiplying per chip dimensions(in cm) 
+      hClusterPerChip->Scale(nvtxROF*1/xDimensionChip*1/zDimensionChip);
+    }
+}
+
   // Filling cluster histogram for each ROF by open_mp
 
   for (unsigned int iROF = 0; iROF < clusRofArr.size(); iROF++) {
@@ -177,6 +226,7 @@ void ITSClusterTask::monitorData(o2::framework::ProcessingContext& ctx)
         int chipIdLocal = (ChipID - ChipBoundary[lay]) % (14 * mNHicPerStave[lay]);
         lane = (chipIdLocal % (14 * mNHicPerStave[lay])) / (14 / 2);
       }
+      
       int npix = -1;
       int isGrouped = -1;
       if (ClusterID != o2::itsmft::CompCluster::InvalidPatternID && !mDict->isGroup(ClusterID)) { // Normal (frequent) cluster shapes
@@ -192,7 +242,9 @@ void ITSClusterTask::monitorData(o2::framework::ProcessingContext& ctx)
         nClustersForBunchCrossing++;
 
       if (lay < 3) {
-
+        
+        //ILOG(Info, Support) << "ChipID " << ChipID << "Chip " << chip << " Layer " << lay << " Stave " << sta << ENDM;
+        hClusterPerChip->Fill(ChipID);
         mClusterOccupancyIB[lay][sta][chip]++;
         mClusterOccupancyIBmonitor[lay][sta][chip]++;
         if (ClusterID < dictSize) {
@@ -202,6 +254,7 @@ void ITSClusterTask::monitorData(o2::framework::ProcessingContext& ctx)
           mClusterSize[lay][sta][chip] += npix;
           mClusterSizeMonitor[lay][sta][chip] += npix;
           nClusters[lay][sta][chip]++;
+
 
           hClusterTopologySummaryIB[lay][sta][chip]->Fill(ClusterID);
 
@@ -337,6 +390,7 @@ void ITSClusterTask::reset()
 {
   ILOG(Info, Support) << "Resetting the histogram" << ENDM;
   hClusterVsBunchCrossing->Reset();
+  hClusterPerChip->Reset();
   mGeneralOccupancy->Reset();
 
   for (Int_t iLayer = 0; iLayer < NLayer; iLayer++) {
@@ -380,6 +434,12 @@ void ITSClusterTask::createAllHistos()
   addObject(hClusterVsBunchCrossing);
   formatAxes(hClusterVsBunchCrossing, "Bunch Crossing ID", "Number of clusters with npix > 2 in ROF", 1, 1.10);
   hClusterVsBunchCrossing->SetStats(0);
+
+  hClusterPerChip = new TH1D("ClusterPerChip", "ClusterPerChip", 432, 0, 432);
+  hClusterPerChip->SetTitle("#clusters per chip");
+  addObject(hClusterPerChip);
+  formatAxes(hClusterPerChip, "Chip", "Cluster", 1, 1.10);
+  hClusterPerChip->SetStats(0);
 
   for (Int_t iLayer = 0; iLayer < NLayer; iLayer++) {
     if (!mEnableLayers[iLayer])
