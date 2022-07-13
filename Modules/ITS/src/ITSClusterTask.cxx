@@ -50,6 +50,9 @@ ITSClusterTask::~ITSClusterTask()
 {
   delete hClusterVsBunchCrossing;
   delete hClusterPerChip;
+  delete hVerticesRof;
+  delete hClusterPerChip_Scaled;
+  delete hClusterPerChip_Weigth;
   for (Int_t iLayer = 0; iLayer < NLayer; iLayer++) {
 
     if (!mEnableLayers[iLayer])
@@ -169,6 +172,8 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
     int nvtxROF_nocut = vertexRofArr[iROF].getNEntries();
     int rofFLAG = 1;
     double zVertexAverage = 0;
+    double xVertexAverage = 0;
+    double yVertexAverage = 0;
     for (int ivtx = start; ivtx < end; ivtx++) {
       auto& vertex = vertexArr[ivtx];
       if (vertex.getNContributors() > 0) {
@@ -182,8 +187,13 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
         if(std::abs(jvertex.getZ() - vertex.getZ()) > 1) rofFLAG = 0;
       }
       zVertexAverage += vertex.getZ();
+      yVertexAverage += vertex.getY();
+      xVertexAverage += vertex.getX();
     }
+    if(nvtxROF ==0) continue;
     zVertexAverage /= nvtxROF;
+    o2::math_utils::Point3D<float> locC;
+    hVerticesRof->Fill(nvtxROF_nocut);
     if (rofFLAG){
       const auto& ROF = clusRofArr[iROF];
       for (int icl = ROF.getFirstEntry(); icl < ROF.getFirstEntry() + ROF.getNEntries(); icl++) {
@@ -197,14 +207,35 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
           lane = (chipIdLocal % (14 * mNHicPerStave[lay])) / (14 / 2);
         }
         if (lay < 3) {
+          auto pattID = cluster.getPatternID();
+          if (pattID == o2::itsmft::CompCluster::InvalidPatternID || mDict->isGroup(pattID)) {
+            o2::itsmft::ClusterPattern patt(pattIt);
+            locC = mDict->getClusterCoordinates(cluster, patt, false);
+          } else {
+            locC = mDict->getClusterCoordinates(cluster);
+            //errX = dict->getErrX(pattID);
+            //errZ = dict->getErrZ(pattID);
+          }
+           // Transformation to the local --> global
+          auto gloC = mGeom->getMatrixL2G(ChipID) * locC;
           //ILOG(Info, Support) << "ChipID " << ChipID << "Chip " << chip << " Layer " << lay << " Stave " << sta << ENDM;
           hClusterPerChip->Fill(ChipID);
-        }
-      }
-      //Scaling per # of vertex per ROF and multiplying per chip dimensions(in cm) 
-      hClusterPerChip->Scale(nvtxROF*1/xDimensionChip*1/zDimensionChip);
-    }
-}
+          hClusterPerChip_Scaled->Fill(ChipID);
+          //ILOG(Info, Support) << "ChipID " << ChipID << "Chip " << chip << " Layer " << lay << " Stave " << sta << " X "<<  gloC.X() << ENDM;
+          double deltaZ = std::abs(locC.Z()-zVertexAverage);
+          double deltaR = std::sqrt(std::pow(locC.X()-xVertexAverage,2)+std::pow(locC.Y()-yVertexAverage,2));
+          double weight = deltaR*std::sqrt(alpha*deltaZ*std::pow(deltaR,2));
+          ILOG(Info, Support) << "Weight= " << weight << ENDM;
+          hClusterPerChip_Weigth->Fill(ChipID, weight);
+        } //end inner barrel
+      }   //end loop on clusters
+    } //end rofFLAG
+    //Scaling per # of vertex per ROF and multiplying per chip dimensions(in cm)
+      //hClusterPerChip_Scaled = (TH1D*) hClusterPerChip->Clone();
+    ILOG(Info, Support) << "VertexROF= " << nvtxROF << "NVertex ROF no cut " << nvtxROF_nocut << ENDM;
+    //hClusterPerChip_Scaled->Scale(1/nvtxROF * xDimensionChip * zDimensionChip);
+    //hClusterPerChip_Weigth->Scale(1/nvtxROF * xDimensionChip * zDimensionChip);
+} 
 
   // Filling cluster histogram for each ROF by open_mp
 
@@ -243,8 +274,6 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
 
       if (lay < 3) {
         
-        //ILOG(Info, Support) << "ChipID " << ChipID << "Chip " << chip << " Layer " << lay << " Stave " << sta << ENDM;
-        hClusterPerChip->Fill(ChipID);
         mClusterOccupancyIB[lay][sta][chip]++;
         mClusterOccupancyIBmonitor[lay][sta][chip]++;
         if (ClusterID < dictSize) {
@@ -391,6 +420,9 @@ void ITSClusterTask::reset()
   ILOG(Info, Support) << "Resetting the histogram" << ENDM;
   hClusterVsBunchCrossing->Reset();
   hClusterPerChip->Reset();
+  hClusterPerChip_Scaled->Reset();
+  hClusterPerChip_Weigth->Reset();
+  hVerticesRof->Reset();
   mGeneralOccupancy->Reset();
 
   for (Int_t iLayer = 0; iLayer < NLayer; iLayer++) {
@@ -440,6 +472,24 @@ void ITSClusterTask::createAllHistos()
   addObject(hClusterPerChip);
   formatAxes(hClusterPerChip, "Chip", "Cluster", 1, 1.10);
   hClusterPerChip->SetStats(0);
+ 
+  hClusterPerChip_Scaled = new TH1F("ClusterPerChip_ChipDimensionsScaled", "ClusterPerChip_ChipDimensionsScaled", 432, 0, 432);
+  hClusterPerChip_Scaled->SetTitle("#clusters per chip scaled to dimension of the chip");
+  addObject(hClusterPerChip_Scaled);
+  formatAxes(hClusterPerChip_Scaled, "Chip", "Cluster", 1, 1.10);
+  //hClusterPerChip_Scaled->SetStats(0);
+
+  hClusterPerChip_Weigth = new TH1F("ClusterPerChip_W", "ClusterPerChip_W", 432, 0, 432);
+  hClusterPerChip_Weigth->SetTitle("#clusters per chip weighted");
+  addObject(hClusterPerChip_Weigth);
+  formatAxes(hClusterPerChip_Weigth, "Chip", "Cluster", 1, 1.10);
+  //hClusterPerChip_Weigth->SetStats(0);
+
+  hVerticesRof = new TH1D("VerticesPerRof", "VerticesPerRof", 20, 0, 20);
+  hVerticesRof->SetTitle("#VerticesPerRof");
+  addObject(hVerticesRof);
+  formatAxes(hVerticesRof, "", "vertices", 1, 1.10);
+  //hVerticesRof->SetStats(0);
 
   for (Int_t iLayer = 0; iLayer < NLayer; iLayer++) {
     if (!mEnableLayers[iLayer])

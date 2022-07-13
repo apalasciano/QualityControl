@@ -90,6 +90,9 @@ class ITSClusterTask : public TaskInterface
   //  THnSparseD *sClustersSize[7];
   TH2D* mGeneralOccupancy;
   TH1D* hClusterPerChip;
+  TH1D* hVerticesRof;
+  TH1F* hClusterPerChip_Scaled;
+  TH1F* hClusterPerChip_Weigth;
 
   const int mOccUpdateFrequency = 100000;
   int mNThreads = 1;
@@ -110,6 +113,7 @@ class ITSClusterTask : public TaskInterface
 
   const double xDimensionChip = 3.0;//cm
   const double zDimensionChip = 1.5;//cm
+  const double alpha= 0.7; //constant uniformity of cluster correction
   int mEnableLayers[7];
   int mClusterSize[7][48][28] = { { { 0 } } }; //[#layers][max staves][max lanes / chips]
   double mClusterSizeMonitor[7][48][28] = { { { 0 } } };
