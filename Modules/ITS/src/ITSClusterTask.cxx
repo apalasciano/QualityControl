@@ -176,14 +176,15 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
     double yVertexAverage = 0;
     for (int ivtx = start; ivtx < end; ivtx++) {
       auto& vertex = vertexArr[ivtx];
-      if (vertex.getNContributors() > 0) {
+      if (vertex.getNContributors() > 2) {
         nvtxROF++;
       }
       for (int jvtx = start; jvtx < end; jvtx++) {
         if(jvtx == ivtx) continue;
         auto& jvertex = vertexArr[jvtx];
-        if(std::abs(jvertex.getX() - vertex.getX()) > 1) rofFLAG = 0;
-        if(std::abs(jvertex.getY() - vertex.getY()) > 1) rofFLAG = 0;
+        if(jvertex.getNContributors() < 2) continue;
+        //if(std::abs(jvertex.getX() - vertex.getX()) > 1) rofFLAG = 0;
+        //if(std::abs(jvertex.getY() - vertex.getY()) > 1) rofFLAG = 0;
         if(std::abs(jvertex.getZ() - vertex.getZ()) > 1) rofFLAG = 0;
       }
       zVertexAverage += vertex.getZ();
@@ -191,7 +192,7 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
       xVertexAverage += vertex.getX();
     }
     if(nvtxROF ==0) continue;
-    zVertexAverage /= nvtxROF;
+    zVertexAverage /= nvtxROF;  xVertexAverage /= nvtxROF;  yVertexAverage /= nvtxROF;
     o2::math_utils::Point3D<float> locC;
     hVerticesRof->Fill(nvtxROF_nocut);
     if (rofFLAG){
@@ -217,16 +218,22 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
             //errZ = dict->getErrZ(pattID);
           }
            // Transformation to the local --> global
-          auto gloC = mGeom->getMatrixL2G(ChipID) * locC;
+          mGeom->fillMatrixCache(o2::math_utils::bit2Mask(o2::math_utils::TransformType::L2G));
+          const math_utils::Point3D<float> loc(0., 0., 0.);
+          o2::math_utils::Point3D<float> gloC = mGeom->getMatrixL2G(ChipID)(loc);
+          o2::math_utils::Point3D<float> gloCpos = mGeom->getMatrixL2G(ChipID)(locC);
           //ILOG(Info, Support) << "ChipID " << ChipID << "Chip " << chip << " Layer " << lay << " Stave " << sta << ENDM;
           hClusterPerChip->Fill(ChipID);
           hClusterPerChip_Scaled->Fill(ChipID);
           //ILOG(Info, Support) << "ChipID " << ChipID << "Chip " << chip << " Layer " << lay << " Stave " << sta << " X "<<  gloC.X() << ENDM;
-          double deltaZ = std::abs(locC.Z()-zVertexAverage);
-          double deltaR = std::sqrt(std::pow(locC.X()-xVertexAverage,2)+std::pow(locC.Y()-yVertexAverage,2));
-          double weight = deltaR*std::sqrt(alpha*deltaZ*std::pow(deltaR,2));
-          ILOG(Info, Support) << "Weight= " << weight << ENDM;
-          hClusterPerChip_Weigth->Fill(ChipID, weight);
+          double deltaZ = std::abs(gloCpos.Z()-zVertexAverage);
+          double deltaR = std::sqrt(std::pow(gloCpos.X()-xVertexAverage,2)+std::pow(gloCpos.Y()-yVertexAverage,2));
+          double weight = deltaR*std::sqrt(deltaZ*deltaZ + std::pow(deltaR,2)); //1
+          /* ILOG(Info, Support) << "loc  ->  " << "Pos: X=" << locC.X()<< "Y =" << locC.Y() << " Z=" << locC.Z() << " Weight= " << weight << ENDM;
+          ILOG(Info, Support) << "gloc(0,0,0)  ->  " << "Pos: X=" << gloC.X()<< "Y =" << gloC.Y() << " Z=" << gloC.Z() << " Weight= " << weight << ENDM;
+          ILOG(Info, Support) << "gloc(0,0,0)  ->  " << "Pos: X=" << gloCpos.X()<< "Y =" << gloCpos.Y() << " Z=" << gloCpos.Z() << " Weight= " << weight << ENDM;
+          ILOG(Info, Support) << ENDM; */
+          hClusterPerChip_Weigth->Fill(ChipID, 1/weight);
         } //end inner barrel
       }   //end loop on clusters
     } //end rofFLAG
@@ -235,14 +242,17 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
     ILOG(Info, Support) << "VertexROF= " << nvtxROF << "NVertex ROF no cut " << nvtxROF_nocut << ENDM;
     //hClusterPerChip_Scaled->Scale(1/nvtxROF * xDimensionChip * zDimensionChip);
     //hClusterPerChip_Weigth->Scale(1/nvtxROF * xDimensionChip * zDimensionChip);
-} 
+}
 
   // Filling cluster histogram for each ROF by open_mp
+  //ILOG(Info, Support) << "1Check" << ENDM;
 
   for (unsigned int iROF = 0; iROF < clusRofArr.size(); iROF++) {
 
     const auto& ROF = clusRofArr[iROF];
     const auto bcdata = ROF.getBCData();
+    //ILOG(Info, Support) << "2Check" << ENDM; //it's ok here
+
     int nClustersForBunchCrossing = 0;
     for (int icl = ROF.getFirstEntry(); icl < ROF.getFirstEntry() + ROF.getNEntries(); icl++) {
 
@@ -257,7 +267,8 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
         int chipIdLocal = (ChipID - ChipBoundary[lay]) % (14 * mNHicPerStave[lay]);
         lane = (chipIdLocal % (14 * mNHicPerStave[lay])) / (14 / 2);
       }
-      
+      //ILOG(Info, Support) << "3Check" << ENDM; //it's ok here
+
       int npix = -1;
       int isGrouped = -1;
       if (ClusterID != o2::itsmft::CompCluster::InvalidPatternID && !mDict->isGroup(ClusterID)) { // Normal (frequent) cluster shapes
@@ -284,7 +295,7 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
           mClusterSizeMonitor[lay][sta][chip] += npix;
           nClusters[lay][sta][chip]++;
 
-
+          //ILOG(Info, Support) << "4Check" << ENDM; //it's ok here
           hClusterTopologySummaryIB[lay][sta][chip]->Fill(ClusterID);
 
           hClusterSizeLayerSummary[lay]->Fill(npix);
@@ -302,7 +313,7 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
         if (ClusterID < dictSize) {
           // Double_t ClusterSizeFill[3] = {1.*sta, 1.*mod, 1.*mDict.getNpixels(ClusterID)};
           // sClustersSize[lay]->Fill(ClusterSizeFill, 1.);
-
+          //ILOG(Info, Support) << "5Check" << ENDM; //Ok here
           mClusterSize[lay][sta][lane] += npix;
           mClusterSizeMonitor[lay][sta][lane] += npix;
           nClusters[lay][sta][lane]++;
@@ -318,11 +329,16 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
         }
       }
     }
+    //ILOG(Info, Support) << "6Check" << ENDM; //it's ok here//it's ok here
     hClusterVsBunchCrossing->Fill(bcdata.bc, nClustersForBunchCrossing); // we count only the number of clusters, not their sizes
+    //ILOG(Info, Support) << "7Check" << ENDM; //it's ok here//it's ok here
   }
-
+  //Identified problem here -> Where it does come from? 
+  ILOG(Info, Support) << "Istheproblemhere?" << ENDM; //This is not printed out in the log file
+  
   mNRofs += clusRofArr.size();        // USED to calculate occupancy for the whole run
   mNRofsMonitor += clusRofArr.size(); // Occupancy in the last N ROFs
+  ILOG(Info, Support) << "LastBigLoop" << ENDM;
 
   if (mNRofs > 0) {
     for (Int_t iLayer = 0; iLayer < NLayer; iLayer++) {
@@ -364,6 +380,7 @@ for (int iROF = 0; iROF < vertexRofArr.size(); iROF++) {
     }
   }
 
+  ILOG(Info, Support) << "AfterFinishingPlotsFilling" << ENDM;
   if (mNRofsMonitor >= mOccUpdateFrequency) {
     updateOccMonitorPlots();
     mNRofsMonitor = 0;
